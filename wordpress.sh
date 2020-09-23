@@ -1,8 +1,10 @@
 #!/bin/bash
 
 #Install PHP and HTTPD service
-yum install php7.1-pdo php7.1-mcrypt php7.1-mbstring php7.1-mysqlnd php7.1-curl php7.1-intl php7.1-cli php7.1-common php7.1-opcache
-php7.1-readline php7.1-json php7.1 httpd24-devel httpd24-tools httpd24 -y
+yum install -y http://mirror.centos.org/centos/7/extras/x86_64/Packages/centos-release-scl-rh-2-3.el7.centos.noarch.rpm
+нгь
+
+systemctl start rh-php72-php-fpm
 
 #Make HTTPD to start on boot.
 chkconfig httpd on

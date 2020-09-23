@@ -1,7 +1,8 @@
 #!/bin/bash
 
 #Install PHP and HTTPD service
-yum install php71-pdo php71-mcrypt php71-mbstring php71-mysqlnd php71-curl php71-intl php71-cli php71 httpd24-devel httpd24-tools httpd24 -y
+yum install php71-pdo php71-mcrypt php71-mbstring php71-mysqlnd php71-curl php71-intl php71-cli php71-common php71-opcache
+php72-readline php71-json php71 httpd24-devel httpd24-tools httpd24 -y
 
 #Make HTTPD to start on boot.
 chkconfig httpd on

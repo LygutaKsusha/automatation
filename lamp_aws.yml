@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  DBName:
+    Default: wordpress
+    Description: The WordPress database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+  DBUser:
+    Default: wordpress
+    Description: The WordPress database admin account username
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+  DBPassword:
+    Default: wordpress
+    Description: The WordPress database admin account password
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16
+
+  Subnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: 'us-east-1a'
+      CidrBlock: 10.0.0.0/24
+
+  Subnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: 'us-east-1b'
+      CidrBlock: 10.0.1.0/24
+
+  IGW:
+    Type: 'AWS::EC2::InternetGateway'
+
+  IGWAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref IGW
+  RouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+
+  Route:
+    Type: 'AWS::EC2::Route'
+    DependsOn: IGWAttachment
+    Properties:
+       RouteTableId:
+         Ref: RouteTable
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId:
+         Ref: IGW
+  Subnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref Subnet1
+      RouteTableId: !Ref RouteTable
+  Subnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref Subnet2
+      RouteTableId: !Ref RouteTable
+  
+  RDSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: RDS Secruity Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          CidrIp: 10.0.0.0/16
+
+  InstanceSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH access and HTTP access on the inbound port
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: '0.0.0.0/0'
+      VpcId: !Ref VPC
+
+  RDS:
+    Type: "AWS::RDS::DBInstance"
+    Properties: 
+      AllocatedStorage: "5"
+      DBInstanceClass: "db.t2.micro"
+      DBName: !Ref DBName
+      Engine: MySQL
+      EngineVersion: "5.7.22"
+      MasterUserPassword: !Ref DBPassword
+      MasterUsername: !Ref DBUser
+      DBSubnetGroupName: !Ref myDBSubnetGroup
+      VPCSecurityGroups: 
+        - !Ref RDSSecurityGroup
+      Tags: 
+        - 
+          Key: Name
+          Value: "My SQL Database"
+  myDBSubnetGroup: 
+    Properties: 
+      DBSubnetGroupDescription: "DB subnet group"
+      SubnetIds: 
+        - !Ref Subnet1
+        - !Ref Subnet2
+    Type: "AWS::RDS::DBSubnetGroup"
+
+  ApplicationLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    DependsOn: RDS
+    Properties:
+      SecurityGroups: 
+        - !Ref InstanceSecurityGroup
+      Subnets: 
+        - !Ref Subnet1
+        - !Ref Subnet2
+  ALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    DependsOn: RDS
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+  ALBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    DependsOn: RDS
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref VPC
+
+  WebServerGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    DependsOn: RDS
+    Properties:
+      VPCZoneIdentifier: 
+        - !Ref Subnet1
+        - !Ref Subnet2
+      LaunchConfigurationName: !Ref LaunchConfig
+      MinSize: '1'
+      MaxSize: '1'
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+
+  LaunchConfig:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    DependsOn: RDS
+    Properties:
+      AssociatePublicIpAddress: true
+      ImageId: ami-0947d2ba12ee1ff75
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - "#!/bin/sh \n"
+            - "sudo yum install -y httpd \n"
+            - "sudo amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2 \n"
+            - "sudo systemctl start httpd \n"
+            - "sudo systemctl enable httpd \n"
+            
+Outputs:
+  URL:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - ApplicationLoadBalancer
+          - DNSName
